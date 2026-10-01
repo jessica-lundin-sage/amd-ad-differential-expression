@@ -158,8 +158,9 @@ run_DE_residuals_pipeline <- function(cfg, qc_plots = TRUE) {
     plot    = qc_plots,
     BPPARAM = param_n
   )
-  voom_res$E <- as.matrix(dge_cqn$E)
-  
+  #voom_res$E <- as.matrix(dge_cqn$E)
+  voom_res$E <- as.matrix(dge_cqn$E)[names(voom_res$voom.xy$x) %||% rownames(dge_cqn$E),
+                                                 colnames(voom_res), drop = FALSE]  
   # 6. dream on technical covariates + residuals
   fit_res <- variancePartition::dream(
     exprObj          = voom_res,
@@ -221,12 +222,12 @@ run_DE_residuals_pipeline <- function(cfg, qc_plots = TRUE) {
     L       = L_group,
     BPPARAM = param_n
   )
-  ebayes_res <- eBayes(fit_res_contrasts)
+  ebayes_res <- variancePartition::eBayes(fit_res_contrasts)
   
   # 9. One topTable per contrast, collected into a named list
   #    (selected by contrast name, so coefficient order can't matter)
   de_results <- setNames(
-    lapply(colnames(L_group), function(nm) topTable(ebayes_res, coef = nm, number = Inf)),
+    lapply(colnames(L_group), function(nm) topTable(ebayes_res, coef = nm, number = Inf, confint = TRUE)),
     colnames(L_group)
   )
   
@@ -259,8 +260,8 @@ msbb_prep_metadata <- function(md_sv, qc_plots = TRUE) {
   md_sv$PMI_log <- log(md_sv$PMI)
   md_sv$sequencingBatch <- factor(md_sv$sequencingBatch)
   if (qc_plots) {
-    print(table(md_sv$diag2, useNA = "always"))
-    print(table(md_sv$diag2, md_sv$sex, useNA = "always"))
+    print(table(md_sv$diagnosis, useNA = "always"))
+    print(table(md_sv$diagnosis, md_sv$sex, useNA = "always"))
   }
   md_sv
 }
@@ -277,10 +278,10 @@ rosmap_prep_metadata <- function(md_sv, qc_plots = TRUE) {
 mayo_prep_metadata <- function(md_sv, qc_plots = TRUE) {
   md_sv$ageDeath_invnorm <- rank_inverse_normal(md_sv$ageDeath)
   md_sv$diag2 <- NA_character_
-  md_sv$diag2[md_sv$diagnosis == "Alzheimer Disease"]              <- "AD"
-  md_sv$diag2[md_sv$diagnosis == "control"]                        <- "CT"
-  md_sv$diag2[md_sv$diagnosis == "pathological aging"]             <- "PathAg"
-  md_sv$diag2[md_sv$diagnosis == "progressive supranuclear palsy"] <- "PSP"
+  md_sv$diag2[md_sv$diagnosis == "Alzheimer Disease"]              <- "AD2"
+  md_sv$diag2[md_sv$diagnosis == "control"]                        <- "CT2"
+  md_sv$diag2[md_sv$diagnosis == "pathological aging"]             <- "PathAg2"
+  md_sv$diag2[md_sv$diagnosis == "progressive supranuclear palsy"] <- "PSP2"
   if (qc_plots) print(table(md_sv$diag2))
   md_sv
 }
@@ -294,16 +295,17 @@ de_formula_shared <- "~ 0 + group + apoe4Status + ageDeath_invnorm + (1|individu
 msbb_cfg <- list(
   name                 = "MSBB",
   input_synid          = "syn77540009",  # MSBB_md_counts_cqn_FINAL.rds - new syn folder
-  output_parent_synid  = "syn77539791",
+  #output_parent_synid  = "syn77539791", # Staging
+  output_parent_synid  = "syn77615867", # amp-ad-rnaseq_reprocessing_intermediate_files
   output_filename_res  = "msbb_md_res-counts_final.rds",
-  output_filename_de   = "amp-ad-de-res_MSBB_sex_stratified.rds",
+  output_filename_de   = "amp-ad-de-res_MSBB_neuro.path.diag_sex_stratified.rds",
   tissue_levels        = c("FP", "IFG", "PG", "STG"),
   sex_levels           = c("male", "female"),
-  diagnosis_var        = "diagnosis",
-  diagnosis_levels     = c("CT", "AD", "OTHER"),
-  case_level           = "AD",
-  control_level        = "CT",
-  residual_formula_str = "~ PMI_log + RIN + PC1_metrics + PC2_metrics + PC3_metrics + (1|sequencingBatch)",
+  diagnosis_var        = "diag2",
+  diagnosis_levels     = c("CT2", "AD2", "OTHER2"),
+  case_level           = "AD2",
+  control_level        = "CT2",
+  residual_formula_str = "~ PMI_log + RIN + PC1_metrics + PC2_metrics + PC3_metrics + PC4_metrics + (1|sequencingBatch)",
   residuals_method     = "variancePartition",
   de_formula_str       = de_formula_shared,
   prep_metadata        = msbb_prep_metadata,
@@ -313,16 +315,17 @@ msbb_cfg <- list(
 rosmap_cfg <- list(
   name                 = "ROSMAP",
   input_synid         = "syn77559937",  # ROSMAP_md_counts_cqn_DLPFC_CN_PCC_FINAL.rds - new syn folder
-  output_parent_synid = "syn77539791",
+  #output_parent_synid = "syn77539791", # Staging
+  output_parent_synid = "syn77615867", # amp-ad-rnaseq_reprocessing_intermediate_files
   output_filename_res  = "rosmap_md_res-counts_final.rds",
-  output_filename_de   = "amp-ad-de-res_ROSMAP_sex_stratified.rds",
+  output_filename_de   = "amp-ad-de-res_ROSMAP_neuro.path.diag_sex_stratified.rds",
   tissue_levels        = c("DLPFC", "PCC", "CN"),
   sex_levels           = c("male", "female"),
-  diagnosis_var        = "diagnosis",
-  diagnosis_levels     = c("CT", "AD", "OTHER"),
-  case_level           = "AD",
-  control_level        = "CT",
-  residual_formula_str = "~ PMI_log + RIN + PC1_metrics + PC2_metrics + PC3_metrics + (1|final_batch)",
+  diagnosis_var        = "diag2",
+  diagnosis_levels     = c("CT2", "AD2", "OTHER2"),
+  case_level           = "AD2",
+  control_level        = "CT2",
+  residual_formula_str = "~ PMI_log + RIN + PC1_metrics + PC2_metrics + PC3_metrics + PC4_metrics + (1|final_batch)",
   residuals_method     = "variancePartition",
   de_formula_str       = de_formula_shared,
   prep_metadata        = rosmap_prep_metadata,
@@ -332,16 +335,16 @@ rosmap_cfg <- list(
 mayo_cfg <- list(
   name                 = "MAYO",
   input_synid          = "syn77548692",  # MAYO_md_counts_cqn_FINAL.rds - new syn folder
-  output_parent_synid  = "syn77539791",
+  output_parent_synid  = "syn77615867", # amp-ad-rnaseq_reprocessing_intermediate_files
   output_filename_res  = "mayo_md_res-counts_final.rds",
-  output_filename_de   = "amp-ad-de-res_MAYO_sex_stratified.rds",
+  output_filename_de   = "amp-ad-de-res_MAYO_neuro.path.diag_sex_stratified.rds",
   tissue_levels        = c("CER", "TCX"),
   sex_levels           = c("male", "female"),
   diagnosis_var        = "diag2",
-  diagnosis_levels     = c("CT", "AD", "PathAg", "PSP"),
-  case_level           = "AD",
-  control_level        = "CT",
-  residual_formula_str = "~ RIN + PC1_metrics + PC2_metrics + (1|flowcell)",
+  diagnosis_levels     = c("CT2", "AD2", "PathAg2", "PSP2"),
+  case_level           = "AD2",
+  control_level        = "CT2",
+  residual_formula_str = "~ RIN + PC1_metrics + PC2_metrics + PC3_metrics + (1|flowcell)",
   residuals_method     = "variancePartition",
   de_formula_str       = de_formula_shared,
   prep_metadata        = mayo_prep_metadata,
@@ -358,4 +361,4 @@ mayo_cfg <- list(
 
 result_msbb   <- run_DE_residuals_pipeline(msbb_cfg)
 result_rosmap <- run_DE_residuals_pipeline(rosmap_cfg)
-#result_mayo   <- run_DE_residuals_pipeline(mayo_cfg)
+result_mayo   <- run_DE_residuals_pipeline(mayo_cfg)
