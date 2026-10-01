@@ -150,8 +150,10 @@ run_DE_pipeline <- function(cfg, qc_plots = TRUE) {
     plot    = qc_plots,
     BPPARAM = param_n
   )
-  voom_gene_expression$E <- as.matrix(dge_cqn$E)
-  
+ # voom_gene_expression$E <- as.matrix(dge_cqn$E)
+  voom_gene_expression$E <- as.matrix(dge_cqn$E)[names(voom_gene_expression$voom.xy$x) %||% rownames(dge_cqn$E),
+                                                 colnames(voom_gene_expression), drop = FALSE]
+ # stopifnot(identical(dim(voom_gene_expression$E), dim(voom_gene_expression$weights)))
   contrasts_vec <- build_group_contrasts(
     tissue_levels  = cfg$tissue_levels,
     sex_levels     = cfg$sex_levels,
@@ -175,7 +177,7 @@ run_DE_pipeline <- function(cfg, qc_plots = TRUE) {
   
   # 6. One topTable per contrast, collected into a named list
   de_results <- setNames(
-    lapply(seq_along(colnames(L_group)), function(i) topTable(ebayes_fit, coef = i, number = Inf)),
+    lapply(seq_along(colnames(L_group)), function(i) topTable(ebayes_fit, coef = i, number = Inf, confint = TRUE)),
     colnames(L_group)
   )
   
@@ -206,7 +208,12 @@ run_DE_pipeline <- function(cfg, qc_plots = TRUE) {
   if (isTRUE(cfg$save_diagnostic_copy) && !is.null(cfg$diagnostic_filename)) {
     saveRDS(DE_save, file = cfg$diagnostic_filename)
     synStore(File(path = cfg$diagnostic_filename,
-                  parent = cfg$diagnostic_parent_synid %||% cfg$output_parent_synid))
+                  parent = cfg$diagnostic_parent_synid %||% cfg$output_parent_synid),
+                  used = cfg$used, 
+                  executed = cfg$executed, 
+                  activityName = cfg$activityName, 
+                  activityDescription = cfg$activityDescription
+                  )
     message("Also saved diagnostic copy '", cfg$diagnostic_filename, "'")
   }
   
@@ -251,10 +258,10 @@ rosmap_prep_metadata <- function(md_sv, qc_plots = TRUE) {
 mayo_prep_metadata <- function(md_sv, qc_plots = TRUE) {
   md_sv$ageDeath_invnorm <- rank_inverse_normal(md_sv$ageDeath)
   md_sv$diag2 <- NA_character_
-  md_sv$diag2[md_sv$diagnosis == "Alzheimer Disease"]              <- "AD"
-  md_sv$diag2[md_sv$diagnosis == "control"]                        <- "CT"
-  md_sv$diag2[md_sv$diagnosis == "pathological aging"]             <- "PathAg"
-  md_sv$diag2[md_sv$diagnosis == "progressive supranuclear palsy"] <- "PSP"
+  md_sv$diag2[md_sv$diagnosis == "Alzheimer Disease"]              <- "AD2"
+  md_sv$diag2[md_sv$diagnosis == "control"]                        <- "CT2"
+  md_sv$diag2[md_sv$diagnosis == "pathological aging"]             <- "PathAg2"
+  md_sv$diag2[md_sv$diagnosis == "progressive supranuclear palsy"] <- "PSP2"
   if (qc_plots) print(table(md_sv$diag2))
   md_sv
 }
@@ -267,7 +274,69 @@ msbb_cfg <- list(
   name                 = "MSBB",
   input_synid          = "syn77540009",  # MSBB_md_counts_cqn_FINAL.rds - new syn folder
   output_parent_synid  = "syn77539791",
-  output_filename      = "amp-ad-de_MSBB_sex_stratified.rds",
+  output_filename      = "amp-ad-de_MSBB_neuro.path.diag_sex_stratified.rds",
+  tissue_levels        = c("FP", "STG", "IFG", "PG"),
+  sex_levels           = c("male", "female"),
+  diagnosis_var        = "diag2",
+  diagnosis_levels     = c("CT2", "AD2", "OTHER2"),
+  case_level           = "AD2",
+  control_level        = "CT2",
+  case_label           = "AD2",     # contrast names use AD/CT, not AD_prev/CT_prev
+  control_label        = "CT2",
+  formula_str          = "~ 0 + group + PMI_log + RIN + apoe4Status + ageDeath_invnorm + PC1_metrics + PC2_metrics + PC3_metrics + PC4_metrics + (1|sequencingBatch) + (1|individualID)",
+  prep_metadata        = msbb_prep_metadata,
+  n_workers            = 4,
+  used                 = c("syn77540009"), 
+  executed             = "https://github.com/jessica-lundin-sage/amd-ad-differential-expression", 
+  activityName         = "Reprocessed RNAseq differential expression files", 
+  activityDescription  = "Metadata, counts, differential expression results"
+)
+
+rosmap_cfg <- list(
+  name                = "ROSMAP",
+  input_synid         = "syn77559937",  # ROSMAP_md_counts_cqn_DLPFC_CN_PCC_FINAL.rds - new syn folder
+  output_parent_synid = "syn77539791",
+  output_filename     = "amp-ad-de_ROSMAP_neuro.path.diag_sex_stratified.rds",
+  tissue_levels       = c("DLPFC", "PCC", "CN"),
+  sex_levels          = c("male", "female"),
+  diagnosis_var       = "diag2",
+  diagnosis_levels    = c("CT2", "AD2", "OTHER2"),
+  case_level          = "AD2",
+  control_level       = "CT2",
+  formula_str         = "~ 0 + group + apoe4Status + ageDeath_invnorm + PMI_log + RIN + PC1_metrics + PC2_metrics + PC3_metrics + PC4_metrics + (1|final_batch) + (1|individualID)",
+  prep_metadata       = rosmap_prep_metadata,
+  n_workers           = 4,
+  used                = c("syn77559937"), 
+  executed            = "https://github.com/jessica-lundin-sage/amd-ad-differential-expression", 
+  activityName        = "Reprocessed RNAseq differential expression files", 
+  activityDescription = "Metadata, counts, differential expression results"
+)
+
+mayo_cfg <- list(
+  name                = "MAYO",
+  input_synid         = "syn77548692",  # MAYO_md_counts_cqn_FINAL.rds - new syn folder
+  output_parent_synid = "syn77539791",
+  output_filename     = "amp-ad-de_MAYO_neuro.path.diag_sex_stratified.rds",
+  tissue_levels       = c("CER", "TCX"),
+  sex_levels          = c("male", "female"),
+  diagnosis_var       = "diag2",
+  diagnosis_levels    = c("CT2", "AD2", "PathAg2", "PSP2"),
+  case_level          = "AD2",
+  control_level       = "CT2",
+  formula_str         = "~ 0 + group + apoe4Status + ageDeath_invnorm + RIN + PC1_metrics + PC2_metrics + PC3_metrics + (1|flowcell) + (1|individualID)",
+  prep_metadata       = mayo_prep_metadata,
+  n_workers           = 4, 
+  executed            = "https://github.com/jessica-lundin-sage/amd-ad-differential-expression", 
+  activityName        = "Reprocessed RNAseq differential expression files", 
+  activityDescription = "Metadata, counts, differential expression results"
+)
+
+
+msbb_cfg_plus_clinical <- list(
+  name                 = "MSBB",
+  input_synid          = "syn77540009",  # MSBB_md_counts_cqn_FINAL.rds - new syn folder
+  output_parent_synid  = "syn77539791",
+  output_filename      = "amp-ad-de_MSBB_neuro.path.diag.plus.clinical_sex_stratified.rds",
   tissue_levels        = c("FP", "STG", "IFG", "PG"),
   sex_levels           = c("male", "female"),
   diagnosis_var        = "diagnosis",
@@ -276,41 +345,33 @@ msbb_cfg <- list(
   control_level        = "CT",
   case_label           = "AD",     # contrast names use AD/CT, not AD_prev/CT_prev
   control_label        = "CT",
-  formula_str          = "~ 0 + group + PMI_log + RIN + apoe4Status + ageDeath_invnorm + PC1_metrics + PC2_metrics + PC3_metrics + (1|sequencingBatch) + (1|individualID)",
+  formula_str          = "~ 0 + group + PMI_log + RIN + apoe4Status + ageDeath_invnorm + PC1_metrics + PC2_metrics + PC3_metrics + PC4_metrics + (1|sequencingBatch) + (1|individualID)",
   prep_metadata        = msbb_prep_metadata,
-  n_workers            = 4
+  n_workers            = 4,
+  used                 = c("syn77540009"), 
+  executed             = "https://github.com/jessica-lundin-sage/amd-ad-differential-expression", 
+  activityName         = "Reprocessed RNAseq differential expression files", 
+  activityDescription  = "Metadata, counts, differential expression results"
 )
 
-rosmap_cfg <- list(
+rosmap_cfg_plus_clinical <- list(
   name                = "ROSMAP",
   input_synid         = "syn77559937",  # ROSMAP_md_counts_cqn_DLPFC_CN_PCC_FINAL.rds - new syn folder
   output_parent_synid = "syn77539791",
-  output_filename     = "amp-ad-de_ROSMAP_sex_stratified.rds",
+  output_filename     = "amp-ad-de_ROSMAP_neuro.path.diag.plus.clinical_sex_stratified.rds",
   tissue_levels       = c("DLPFC", "PCC", "CN"),
   sex_levels          = c("male", "female"),
   diagnosis_var       = "diagnosis",
   diagnosis_levels    = c("CT", "AD", "OTHER"),
   case_level          = "AD",
   control_level       = "CT",
-  formula_str         = "~ 0 + group + apoe4Status + ageDeath_invnorm + PMI_log + RIN + PC1_metrics + PC2_metrics + PC3_metrics + (1|final_batch) + (1|individualID)",
+  formula_str         = "~ 0 + group + apoe4Status + ageDeath_invnorm + PMI_log + RIN + PC1_metrics + PC2_metrics + PC3_metrics + PC4_metrics + (1|final_batch) + (1|individualID)",
   prep_metadata       = rosmap_prep_metadata,
-  n_workers           = 4
-)
-
-mayo_cfg <- list(
-  name                = "MAYO",
-  input_synid         = "syn77548692",  # MAYO_md_counts_cqn_FINAL.rds - new syn folder
-  output_parent_synid = "syn77539791",
-  output_filename     = "amp-ad-de_MAYO_sex_stratified.rds",
-  tissue_levels       = c("CER", "TCX"),
-  sex_levels          = c("male", "female"),
-  diagnosis_var       = "diag2",
-  diagnosis_levels    = c("CT", "AD", "PathAg", "PSP"),
-  case_level          = "AD",
-  control_level       = "CT",
-  formula_str         = "~ 0 + group + apoe4Status + ageDeath_invnorm + RIN + PC1_metrics + PC2_metrics + (1|flowcell) + (1|individualID)",
-  prep_metadata       = mayo_prep_metadata,
-  n_workers           = 4
+  n_workers           = 4,
+  used                = c("syn77559937"), 
+  executed            = "https://github.com/jessica-lundin-sage/amd-ad-differential-expression", 
+  activityName        = "Reprocessed RNAseq differential expression files", 
+  activityDescription = "Metadata, counts, differential expression results"
 )
 
 ## ----------------------------------------------------------------------------
@@ -324,3 +385,6 @@ mayo_cfg <- list(
 result_msbb   <- run_DE_pipeline(msbb_cfg)
 result_rosmap <- run_DE_pipeline(rosmap_cfg)
 result_mayo   <- run_DE_pipeline(mayo_cfg)
+
+result_msbb_plus_clinical   <- run_DE_pipeline(msbb_cfg_plus_clinical)
+result_rosmap_plus_clinical  <- run_DE_pipeline(rosmap_cfg_plus_clinical)
