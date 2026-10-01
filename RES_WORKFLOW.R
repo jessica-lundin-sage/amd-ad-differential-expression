@@ -317,7 +317,7 @@ rosmap_cfg <- list(
   input_synid         = "syn77559937",  # ROSMAP_md_counts_cqn_DLPFC_CN_PCC_FINAL.rds - new syn folder
   #output_parent_synid = "syn77539791", # Staging
   output_parent_synid = "syn77615867", # amp-ad-rnaseq_reprocessing_intermediate_files
-  output_filename_res  = "rosmap_md_res-counts_final.rds",
+  output_filename_res  = "rosmap_md_res-counts_dlpfc_cn_pcc_final.rds",  
   output_filename_de   = "amp-ad-de-res_ROSMAP_neuro.path.diag_sex_stratified.rds",
   tissue_levels        = c("DLPFC", "PCC", "CN"),
   sex_levels           = c("male", "female"),
