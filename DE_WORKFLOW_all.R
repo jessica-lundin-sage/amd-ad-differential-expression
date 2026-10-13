@@ -298,7 +298,7 @@ run_DE_pipeline <- function(cfg, qc_plots = TRUE) {
     lapply(rownames_to_column, var = "ensembl_gene_id") |>
     bind_rows(.id = "Comparison")
   
-  syn_gene_file <- synapser::synGet("syn74907403")
+  syn_gene_file <- synapser::synGet("syn74907403") ## created using code from here: https://github.com/jaclynbeck-sage/sageRNAUtils/blob/main/R/gc_content_functions.R
   gene_info <- read.csv(syn_gene_file$path)
   combined <- merge(combined, gene_info, by = "ensembl_gene_id", all.x=T)
   
