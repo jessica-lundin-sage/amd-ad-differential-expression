@@ -64,26 +64,33 @@ rank_inverse_normal <- function(x, k = 3 / 8) {
 build_group_contrasts <- function(tissue_levels, sex_levels,
                                   case_level, control_level,
                                   case_label = case_level,
-                                  control_label = control_level) {
-  combos <- expand.grid(sex = sex_levels, tissue = tissue_levels, stringsAsFactors = FALSE)
-  combos <- combos[order(match(combos$tissue, tissue_levels), match(combos$sex, sex_levels)), ]
+                                  control_label = control_level,
+                                  sex_mode = c("stratified", "adjusted"))  {
+  sex_mode <- match.arg(sex_mode)
   
-  exprs <- sprintf(
-    "(group%s.%s.%s - group%s.%s.%s)",
-    case_level, combos$sex, combos$tissue,
-    control_level, combos$sex, combos$tissue
-  )
-  nms <- sprintf(
-    "%s_vs_%s_%s.%s",
-    case_label, control_label, combos$sex, combos$tissue
-  )
+  if (sex_mode == "stratified") {
+    combos <- expand.grid(sex = sex_levels, tissue = tissue_levels, stringsAsFactors = FALSE)
+    combos <- combos[order(match(combos$tissue, tissue_levels), match(combos$sex, sex_levels)), ]
+    exprs <- sprintf(
+      "(group%s.%s.%s - group%s.%s.%s)",
+      case_level, combos$sex, combos$tissue,
+      control_level, combos$sex, combos$tissue
+    )
+    nms <- sprintf("%s_vs_%s_%s.%s", case_label, control_label, combos$sex, combos$tissue)
+  } else {
+    exprs <- sprintf(
+      "(group%s.%s - group%s.%s)",
+      case_level, tissue_levels,
+      control_level, tissue_levels
+    )
+    nms <- sprintf("%s_vs_%s.%s", case_label, control_label, tissue_levels)
+  }
   setNames(exprs, nms)
 }
-
 # Minimal defensive check that a cfg has everything the engine needs.
 validate_cfg <- function(cfg) {
   required <- c(
-    "name", "input_synid", "output_parent_synid",
+    "name", "input_synid", "output_parent_synid_res", "output_parent_synid_de",
     "output_filename_res", "output_filename_de",
     "tissue_levels", "sex_levels", "diagnosis_var", "diagnosis_levels",
     "case_level", "control_level", "residual_formula_str", "de_formula_str",
@@ -96,16 +103,68 @@ validate_cfg <- function(cfg) {
   if (!cfg$residuals_method %in% c("stats", "variancePartition")) {
     stop("cfg$residuals_method must be 'stats' or 'variancePartition'")
   }
+  sex_mode <- cfg$sex_mode %||% "stratified"
+  if (!sex_mode %in% c("stratified", "adjusted")) {
+    stop("cfg for '", cfg$name, "': sex_mode must be 'stratified' or 'adjusted'")
+  }
+  has_sex <- grepl("\\bsex\\b", cfg$de_formula_str)
+  if (sex_mode == "adjusted" && !has_sex) {
+    warning("cfg for '", cfg$name, "': sex_mode = 'adjusted' but formula_str has no `sex` covariate")
+  }
+  if (sex_mode == "stratified" && has_sex) {
+    stop("cfg for '", cfg$name, "': sex_mode = 'stratified' but formula_str includes `sex` ",
+         "(sex is already in `group`; the design would be rank-deficient)")
+  }
 }
 `%||%` <- function(a, b) if (is.null(a)) b else a
 
-# saveRDS + synStore, recording the input file as provenance
-save_and_store <- function(obj, filename, cfg) {
-  saveRDS(obj, file = filename)
-  invisible(synLogin(silent = TRUE))
-  synStore(File(path = filename, parent = cfg$output_parent_synid), used = cfg$input_synid)
-  message("Saved '", filename, "' -> ", cfg$output_parent_synid)
+
+# Turn a sex-stratified cfg into the matching sex-adjusted cfg.
+#   - sex_mode            -> "adjusted"
+#   - formula_str         -> inserts "+ sex" right after "group"
+#   - output_filename     -> "sex_stratified" replaced by "sex_adj"
+#                            (or "_sex_adj" appended before the extension)
+#   - out_counts_filename -> NULL by default: the normalized counts are the
+#                            cqn E matrix and don't depend on the model, so
+#                            they'd duplicate the stratified run's file.
+#                            Pass keep_counts = TRUE to write them anyway.
+# Any extra named args override fields, e.g.
+#   make_sexadj_cfg(msbb_cfg, output_filename = "my_name.csv")
+make_sexadj_cfg <- function(cfg, keep_counts = FALSE, ...) {
+  new <- cfg
+  new$sex_mode <- "adjusted"
+  
+  if (!grepl("\\bsex\\b", new$de_formula_str)) {
+    new$de_formula_str <- sub("\\bgroup\\b", "group + sex", new$de_formula_str)
+  }
+  
+  
+rename_out <- function(f) {
+    if (is.null(f)) return(f)
+    if (grepl("sex_stratified", f)) return(sub("sex_stratified", "sex_adj", f))
+    sub("(\\.[^.]+)$", "_sex_adj\\1", f)
+  }
+  new$output_filename <- rename_out(new$output_filename)
+  
+  if (keep_counts) {
+    new$out_counts_filename <- rename_out(new$out_counts_filename)
+  } else {
+    new$out_counts_filename <- NULL
+  }
+  
+  overrides <- list(...)
+  for (nm in names(overrides)) new[[nm]] <- overrides[[nm]]
+  new
 }
+
+
+# saveRDS + synStore, recording the input file as provenance
+#save_and_store <- function(obj, filename, cfg) {
+#  saveRDS(obj, file = filename)
+#  invisible(synLogin(silent = TRUE))
+#  synStore(File(path = filename, parent = cfg$output_parent_synid), used = cfg$input_synid)
+#  message("Saved '", filename, "' -> ", cfg$output_parent_synid)
+#}
 
 ## ----------------------------------------------------------------------------
 ## Shared engine — identical steps for every cohort
@@ -113,7 +172,8 @@ save_and_store <- function(obj, filename, cfg) {
 
 run_DE_residuals_pipeline <- function(cfg, qc_plots = TRUE) {
   validate_cfg(cfg)
-  message("== Running DE-on-residuals pipeline: ", cfg$name, " ==")
+  sex_mode <- cfg$sex_mode %||% "stratified"
+  message("== Running DE pipeline: ", cfg$name, " (sex ", sex_mode, ") ==")
   
   # 1. Pull the cqn'd counts + metadata object from Synapse
   file_entity <- synGet(cfg$input_synid)
@@ -123,6 +183,18 @@ run_DE_residuals_pipeline <- function(cfg, qc_plots = TRUE) {
   
   # 2. Cohort-specific metadata prep (diagnosis derivation, batch factors)
   md_sv <- cfg$prep_metadata(md_sv, qc_plots = qc_plots)
+ 
+  # centering vars so scales are not so different to help with convergence (small number excluded due to this)
+  num_covs <- c("RIN", "ageDeath_invnorm",
+                grep("^PC\\d+_metrics$", colnames(md_sv), value = TRUE))
+  num_covs <- intersect(num_covs, all.vars(form_final0))
+  md_sv[num_covs] <- lapply(md_sv[num_covs], function(x) as.numeric(scale(x)))
+
+  # 3. Keep only samples present in the (possibly filtered) metadata, then
+  #    align dge_cqn <-> md_sv
+  keep_samples <- colnames(dge_cqn) %in% md_sv$specimenID
+  dge_cqn <- dge_cqn[, keep_samples]
+  dge_cqn$E <- dge_cqn$E[, keep_samples, drop = FALSE]
   
   # 3. Align dge_cqn <-> md_sv exactly as all three originals did
   rownames(md_sv) <- md_sv$specimenID
@@ -141,7 +213,29 @@ run_DE_residuals_pipeline <- function(cfg, qc_plots = TRUE) {
   md_sv[[cfg$diagnosis_var]] <- factor(md_sv[[cfg$diagnosis_var]], levels = cfg$diagnosis_levels)
   md_sv <- as.data.frame(md_sv)
   
-  param_n <- MulticoreParam(workers = cfg$n_workers, progressbar = TRUE)
+  if (sex_mode == "stratified") {
+    md_sv$group <- interaction(md_sv[[cfg$diagnosis_var]], md_sv$sex, md_sv$tissue2, drop = TRUE)
+  } else {
+    md_sv$group <- interaction(md_sv[[cfg$diagnosis_var]], md_sv$tissue2, drop = TRUE)
+  }
+  group <- md_sv$group
+  # some formula terms are resolved via the global env as a fallback, matching
+  # the original scripts' `environment(form_final0) <- globalenv()` pattern
+  assign("group", group, envir = globalenv())
+  
+  if (qc_plots) {
+    print(table(md_sv$group))
+    if (sex_mode == "adjusted") print(table(md_sv$group, md_sv$sex, useNA = "ifany"))
+  }
+  
+  form_final0 <- as.formula(cfg$formula_str)
+  environment(form_final0) <- globalenv()
+  md_sv <- as.data.frame(md_sv)
+  
+  # Set standard global seed for the main session
+  set.seed(123)
+  
+  param_n <- MulticoreParam(workers = cfg$n_workers, RNGseed = 123, progressbar = TRUE)
   
   ## --------------------------------------------------------------------------
   ## STAGE 1: residualize technical covariates
@@ -176,16 +270,36 @@ run_DE_residuals_pipeline <- function(cfg, qc_plots = TRUE) {
   )
   if (qc_plots) print(res_counts[1:5, 1:5])
   
-  DE_res <- list(
-    metadata   = md_sv,
-    vobj_res   = voom_res,
-    dge_cqn    = dge_cqn,
-    fit_res    = fit_res,
-    res_counts = res_counts
-  )
+  # Stack into one long table + add gene info
+  res_counts2 <- res_counts |>
+    as.data.frame() |>
+    tibble::rownames_to_column(var = "ensembl_gene_id")
+  
+  #res_counts2 <- res_counts |>
+   # lapply(rownames_to_column, var = "ensembl_gene_id") |>
+  #  bind_rows(.id = "Comparison")
+  
+  syn_gene_file <- synapser::synGet("syn74907403") ## created using code from here: https://github.com/jaclynbeck-sage/sageRNAUtils/blob/main/R/gc_content_functions.R
+  gene_info <- read.csv(syn_gene_file$path)
+  combined <- merge(res_counts2, gene_info, by = "ensembl_gene_id", all.x=T)
+  
+  # 8. Save DE results CSV and upload
+  write.csv(combined, cfg$output_filename_res, row.names = FALSE)
+  invisible(synLogin(silent = TRUE))
+  synStore(File(cfg$output_filename_res, parent = cfg$output_parent_synid_res))
+  message("Saved '", cfg$output_filename_res, "' -> ", cfg$output_parent_synid_res)
+  
+  
+ # DE_res <- list(
+ #   metadata   = md_sv,
+ #   vobj_res   = voom_res,
+  #  dge_cqn    = dge_cqn,
+ #   fit_res    = fit_res,
+ #   res_counts = res_counts
+ # )
   
   # 7. Save + upload residuals
-  save_and_store(DE_res, cfg$output_filename_res, cfg)
+ # save_and_store(DE_res, cfg$output_filename_res, cfg)
   
   ## --------------------------------------------------------------------------
   ## STAGE 2: DE on the residualized matrix
@@ -208,7 +322,8 @@ run_DE_residuals_pipeline <- function(cfg, qc_plots = TRUE) {
     case_level     = cfg$case_level,
     control_level  = cfg$control_level,
     case_label     = cfg$case_label %||% cfg$case_level,
-    control_label  = cfg$control_label %||% cfg$control_level
+    control_label  = cfg$control_label %||% cfg$control_level,
+    sex_mode       = sex_mode
   )
   
   L_group <- makeContrastsDream(form_ck, md_sv, contrasts = contrasts_vec)
@@ -231,6 +346,18 @@ run_DE_residuals_pipeline <- function(cfg, qc_plots = TRUE) {
     colnames(L_group)
   )
   
+  # Sex main effect (adjusted mode only): female vs male, adjusted for
+  # group + covariates
+  results_sex <- list()
+  if (sex_mode == "adjusted") {
+    sex_coef <- grep("^sex", colnames(coef(ebayes_fit)), value = TRUE)
+    results_sex <- setNames(
+      lapply(sex_coef, function(nm) topTable(ebayes_fit, coef = nm, number = Inf, confint = TRUE)),
+      sex_coef
+    )
+  }
+  
+  
   if (qc_plots) {
     for (nm in names(de_results)) {
       tt <- de_results[[nm]]
@@ -238,17 +365,48 @@ run_DE_residuals_pipeline <- function(cfg, qc_plots = TRUE) {
     }
   }
   
-  DE_save <- list(
-    metadata_res      = md_sv,
-    fit_res_contrasts = fit_res_contrasts,
-    ebayes_res        = ebayes_res,
-    results           = de_results
-  )
+  # 7. Rename contrasts to "case - control" Comparison labels.
+  #    Each pattern only matches its own format, so the order doesn't matter.
+  res_x <- de_results
+  nm <- names(res_x)
+  nm <- sub("^(AD2?)_vs_(CT2?)_(\\w+)\\.(\\w+)$", "\\1_\\3_\\4 - \\2_\\3_\\4", nm)  # sex-stratified
+  nm <- sub("^(AD2?)_vs_(CT2?)\\.(\\w+)$",        "\\1_\\3 - \\2_\\3",         nm)  # sex-adjusted (tissue only)
+  names(res_x) <- nm
+  
+  if (sex_mode == "adjusted" && isTRUE(cfg$include_sex_effect %||% TRUE) && length(results_sex) > 0) {
+    ref_sex <- cfg$sex_levels[1]
+    sex_nm  <- sprintf("%s - %s", sub("^sex", "", names(results_sex)), ref_sex)  # e.g. "female - male"
+    res_x   <- c(res_x, setNames(results_sex, sex_nm))
+  }
+  
+  
+  # Stack into one long table + add gene info
+  combined <- res_x |>
+    lapply(rownames_to_column, var = "ensembl_gene_id") |>
+    bind_rows(.id = "Comparison")
+  
+  syn_gene_file <- synapser::synGet("syn74907403") ## created using code from here: https://github.com/jaclynbeck-sage/sageRNAUtils/blob/main/R/gc_content_functions.R
+  gene_info <- read.csv(syn_gene_file$path)
+  combined <- merge(combined, gene_info, by = "ensembl_gene_id", all.x=T)
+  
+  # 8. Save DE results CSV and upload
+  write.csv(combined, cfg$output_filename_de, row.names = FALSE)
+  invisible(synLogin(silent = TRUE))
+  synStore(File(cfg$output_filename_de, parent = cfg$output_parent_synid_de))
+  message("Saved '", cfg$output_filename_de, "' -> ", cfg$output_parent_synid_de)
+  
+  
+ # DE_save <- list(
+#    metadata_res      = md_sv,
+ #   fit_res_contrasts = fit_res_contrasts,
+ #   ebayes_res        = ebayes_res,
+ #   results           = de_results
+#  )
   
   # 10. Save + upload DE results
-  save_and_store(DE_save, cfg$output_filename_de, cfg)
+ # save_and_store(DE_save, cfg$output_filename_de, cfg)
   
-  invisible(list(DE_res = DE_res, DE_save = DE_save))
+ # invisible(list(DE_res = DE_res, DE_save = DE_save))
 }
 
 ## ----------------------------------------------------------------------------
@@ -257,6 +415,8 @@ run_DE_residuals_pipeline <- function(cfg, qc_plots = TRUE) {
 
 msbb_prep_metadata <- function(md_sv, qc_plots = TRUE) {
   md_sv$ageDeath_invnorm <- rank_inverse_normal(md_sv$ageDeath)
+  md_sv <- md_sv[md_sv$tissue2 != "PC", ]
+  md_sv[md_sv$tissue2 == "PG", "tissue2"] <- "PHG"
   md_sv$PMI_log <- log(md_sv$PMI)
   md_sv$sequencingBatch <- factor(md_sv$sequencingBatch)
   if (qc_plots) {
@@ -268,6 +428,7 @@ msbb_prep_metadata <- function(md_sv, qc_plots = TRUE) {
 
 rosmap_prep_metadata <- function(md_sv, qc_plots = TRUE) {
   md_sv$ageDeath_invnorm <- rank_inverse_normal(md_sv$ageDeath)
+  md_sv[md_sv$tissue2 == "CN", "tissue2"] <- "ACC"
   md_sv$PMI_log <- log(md_sv$PMI)
   md_sv$final_batch <- factor(md_sv$final_batch)
   md_sv$diagnosis   <- factor(md_sv$diagnosis, levels = c("CT", "AD", "OTHER"))
@@ -277,6 +438,7 @@ rosmap_prep_metadata <- function(md_sv, qc_plots = TRUE) {
 
 mayo_prep_metadata <- function(md_sv, qc_plots = TRUE) {
   md_sv$ageDeath_invnorm <- rank_inverse_normal(md_sv$ageDeath)
+  md_sv[md_sv$tissue2 == "CER", "tissue2"] <- "CBE"
   md_sv$diag2 <- NA_character_
   md_sv$diag2[md_sv$diagnosis == "Alzheimer Disease"]              <- "AD2"
   md_sv$diag2[md_sv$diagnosis == "control"]                        <- "CT2"
@@ -294,17 +456,21 @@ de_formula_shared <- "~ 0 + group + apoe4Status + ageDeath_invnorm + (1|individu
 
 msbb_cfg <- list(
   name                 = "MSBB",
+  sex_mode                = "stratified",
   input_synid          = "syn77540009",  # MSBB_md_counts_cqn_FINAL.rds - new syn folder
   #output_parent_synid  = "syn77539791", # Staging
-  output_parent_synid  = "syn77615867", # amp-ad-rnaseq_reprocessing_intermediate_files
-  output_filename_res  = "msbb_md_res-counts_final.rds",
-  output_filename_de   = "amp-ad-de-res_MSBB_neuro.path.diag_sex_stratified.rds",
-  tissue_levels        = c("FP", "IFG", "PG", "STG"),
+  output_parent_synid_res  = "syn77802600", # res-counts
+  output_parent_synid_de  = "syn77956686", # de-res-counts
+  output_filename_res  = "res-counts_msbb_test.csv",
+  output_filename_de   = "de-res_MSBB_neuro.path.diag_sex_stratified_test.rds",
+  tissue_levels        = c("FP", "IFG", "PHG", "STG"),
   sex_levels           = c("male", "female"),
   diagnosis_var        = "diag2",
   diagnosis_levels     = c("CT2", "AD2", "OTHER2"),
   case_level           = "AD2",
   control_level        = "CT2",
+  case_label              = "AD",     # contrast names use AD/CT, not AD2/CT2
+  control_label           = "CT",
   residual_formula_str = "~ PMI_log + RIN + PC1_metrics + PC2_metrics + PC3_metrics + PC4_metrics + (1|sequencingBatch)",
   residuals_method     = "variancePartition",
   de_formula_str       = de_formula_shared,
@@ -314,17 +480,21 @@ msbb_cfg <- list(
 
 rosmap_cfg <- list(
   name                 = "ROSMAP",
-  input_synid         = "syn77559937",  # ROSMAP_md_counts_cqn_DLPFC_CN_PCC_FINAL.rds - new syn folder
+  sex_mode                = "stratified",
+  input_synid         = "syn77964695",  # ROSMAP_md_counts_cqn_DLPFC_CN_PCC_FINAL.rds - new syn folder
   #output_parent_synid = "syn77539791", # Staging
-  output_parent_synid = "syn77615867", # amp-ad-rnaseq_reprocessing_intermediate_files
-  output_filename_res  = "rosmap_md_res-counts_dlpfc_cn_pcc_final.rds",  
-  output_filename_de   = "amp-ad-de-res_ROSMAP_neuro.path.diag_sex_stratified.rds",
-  tissue_levels        = c("DLPFC", "PCC", "CN"),
+  output_parent_synid_res  = "syn77802600", # res-counts
+  output_parent_synid_de  = "syn77956686", # de-res-counts
+  output_filename_res  = "res-counts_rosmap_test.csv",  
+  output_filename_de   = "de-res_ROSMAP_neuro.path.diag_sex_stratified_test.csv",
+  tissue_levels        = c("DLPFC", "PCC", "ACC"),
   sex_levels           = c("male", "female"),
   diagnosis_var        = "diag2",
   diagnosis_levels     = c("CT2", "AD2", "OTHER2"),
   case_level           = "AD2",
   control_level        = "CT2",
+  case_label              = "AD",     # contrast names use AD/CT, not AD2/CT2
+  control_label           = "CT",
   residual_formula_str = "~ PMI_log + RIN + PC1_metrics + PC2_metrics + PC3_metrics + PC4_metrics + (1|final_batch)",
   residuals_method     = "variancePartition",
   de_formula_str       = de_formula_shared,
@@ -334,22 +504,38 @@ rosmap_cfg <- list(
 
 mayo_cfg <- list(
   name                 = "MAYO",
+  sex_mode                = "stratified",
   input_synid          = "syn77548692",  # MAYO_md_counts_cqn_FINAL.rds - new syn folder
-  output_parent_synid  = "syn77615867", # amp-ad-rnaseq_reprocessing_intermediate_files
-  output_filename_res  = "mayo_md_res-counts_final.rds",
-  output_filename_de   = "amp-ad-de-res_MAYO_neuro.path.diag_sex_stratified.rds",
-  tissue_levels        = c("CER", "TCX"),
+  output_parent_synid_res  = "syn77802600", # res-counts
+  output_parent_synid_de  = "syn77956686", # de-res-counts
+  output_filename_res  = "res-counts_mayo_test.csv",
+  output_filename_de   = "de-res_MAYO_neuro.path.diag_sex_stratified_test.csv",
+  tissue_levels        = c("CBE", "TCX"),
   sex_levels           = c("male", "female"),
   diagnosis_var        = "diag2",
   diagnosis_levels     = c("CT2", "AD2", "PathAg2", "PSP2"),
   case_level           = "AD2",
   control_level        = "CT2",
+  case_label              = "AD",     # contrast names use AD/CT, not AD2/CT2
+  control_label           = "CT",
   residual_formula_str = "~ RIN + PC1_metrics + PC2_metrics + PC3_metrics + (1|flowcell)",
   residuals_method     = "variancePartition",
   de_formula_str       = de_formula_shared,
   prep_metadata        = mayo_prep_metadata,
   n_workers            = 4
 )
+
+## ----------------------------------------------------------------------------
+## Sex-adjusted configs — derived from the stratified ones above
+## (formula gets "+ sex", outputs renamed "..._sex_adj.csv", counts file
+## skipped since it would be identical to the stratified run's)
+## ----------------------------------------------------------------------------
+
+msbb_cfg_sexadj                 <- make_sexadj_cfg(msbb_cfg)
+rosmap_cfg_sexadj               <- make_sexadj_cfg(rosmap_cfg)
+mayo_cfg_sexadj                 <- make_sexadj_cfg(mayo_cfg)
+#msbb_cfg_plus_clinical_sexadj   <- make_sexadj_cfg(msbb_cfg_plus_clinical)
+#rosmap_cfg_plus_clinical_sexadj <- make_sexadj_cfg(rosmap_cfg_plus_clinical)
 
 ## ----------------------------------------------------------------------------
 ## RUN
@@ -359,6 +545,13 @@ mayo_cfg <- list(
 ## ) then run one of:
 ## ----------------------------------------------------------------------------
 
+## Sex-stratified
 result_msbb   <- run_DE_residuals_pipeline(msbb_cfg)
 result_rosmap <- run_DE_residuals_pipeline(rosmap_cfg)
 result_mayo   <- run_DE_residuals_pipeline(mayo_cfg)
+
+## Sex-adjusted (sex as covariate)
+result_msbb_sexadj   <- run_DE_pipeline(msbb_cfg_sexadj)
+result_rosmap_sexadj <- run_DE_pipeline(rosmap_cfg_sexadj)
+result_mayo_sexadj   <- run_DE_pipeline(mayo_cfg_sexadj)
+
