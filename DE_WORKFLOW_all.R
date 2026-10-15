@@ -177,7 +177,13 @@ run_DE_pipeline <- function(cfg, qc_plots = TRUE) {
   dge_cqn <- cqn_obj$dge_cqn
   
   # 2. Cohort-specific metadata prep (may add columns and/or drop rows)
-  md_sv <- cfg$prep_metadata(md_sv, qc_plots = qc_plots)
+  md_sv <- cfg$prep_metadata(md_sv)
+  
+  # centering vars so scales are not so different to help with convergence (small number excluded due to this)
+  num_covs <- c("RIN", "ageDeath_invnorm",
+                grep("^PC\\d+_metrics$", colnames(md_sv), value = TRUE))
+  num_covs <- intersect(num_covs, all.vars(form_final0))
+  md_sv[num_covs] <- lapply(md_sv[num_covs], function(x) as.numeric(scale(x)))
   
   # 3. Keep only samples present in the (possibly filtered) metadata, then
   #    align dge_cqn <-> md_sv
@@ -219,8 +225,11 @@ run_DE_pipeline <- function(cfg, qc_plots = TRUE) {
   environment(form_final0) <- globalenv()
   md_sv <- as.data.frame(md_sv)
   
+  # Set standard global seed for the main session
+  set.seed(123)
+  
   # 5. voom weights + dream fit
-  param_n <- MulticoreParam(workers = cfg$n_workers, progressbar = TRUE)
+  param_n <- MulticoreParam(workers = cfg$n_workers, RNGseed = 123, progressbar = TRUE)
   
   voom_gene_expression <- voomWithDreamWeights(
     counts  = dge_cqn,
@@ -387,7 +396,7 @@ msbb_cfg <- list(
   name                    = "MSBB",
   sex_mode                = "stratified",
   input_synid             = "syn77540009",  # MSBB_md_counts_cqn_FINAL.rds - new syn folder
-  output_parent_synid     = "syn77539791",
+  output_parent_synid     = "syn77965053",
   output_filename         = "de_MSBB_neuro.path.diag_sex_stratified.csv",
   out_counts_parent_synid = "syn77870712",
   out_counts_filename     = "norm-counts_msbb.csv",
@@ -411,8 +420,8 @@ msbb_cfg <- list(
 rosmap_cfg <- list(
   name                    = "ROSMAP",
   sex_mode                = "stratified",
-  input_synid             = "syn77559937",  # ROSMAP_md_counts_cqn_DLPFC_CN_PCC_FINAL.rds - new syn folder
-  output_parent_synid     = "syn77539791",
+  input_synid             = "syn77964695",  # ROSMAP_md_counts_cqn_DLPFC_CN_PCC_FINAL.rds - new syn folder
+  output_parent_synid     = "syn77965053",
   output_filename         = "de_ROSMAP_neuro.path.diag_sex_stratified.csv",
   out_counts_parent_synid = "syn77870712",
   out_counts_filename     = "norm-counts_rosmap.csv",
@@ -437,8 +446,8 @@ mayo_cfg <- list(
   name                    = "MAYO",
   sex_mode                = "stratified",
   input_synid             = "syn77548692",  # MAYO_md_counts_cqn_FINAL.rds - new syn folder
-  output_parent_synid     = "syn77539791",
-  output_filename         = "de_MAYO_neuro.path.diag_sex_stratified_test.csv",
+  output_parent_synid     = "syn77965053",
+  output_filename         = "de_MAYO_neuro.path.diag_sex_stratified.csv",
   out_counts_parent_synid = "syn77870712",
   out_counts_filename     = "norm-counts_mayo_test.csv",
   tissue_levels           = c("CBE", "TCX"),
@@ -462,7 +471,7 @@ msbb_cfg_plus_clinical <- list(
   name                    = "MSBB",
   sex_mode                = "stratified",
   input_synid             = "syn77540009",  # MSBB_md_counts_cqn_FINAL.rds - new syn folder
-  output_parent_synid     = "syn77539791",
+  output_parent_synid     = "syn77965053",
   output_filename         = "de_MSBB_neuro.path.diag.plus.clinical_sex_stratified.csv",
   out_counts_parent_synid = "syn77870712",
   out_counts_filename     = "norm-counts_msbb.csv",
@@ -486,8 +495,8 @@ msbb_cfg_plus_clinical <- list(
 rosmap_cfg_plus_clinical <- list(
   name                    = "ROSMAP",
   sex_mode                = "stratified",
-  input_synid             = "syn77559937",  # ROSMAP_md_counts_cqn_DLPFC_CN_PCC_FINAL.rds - new syn folder
-  output_parent_synid     = "syn77539791",
+  input_synid             = "syn77964695",  # ROSMAP_md_counts_cqn_DLPFC_CN_PCC_FINAL.rds - new syn folder
+  output_parent_synid     = "syn77965053",
   output_filename         = "de_ROSMAP_neuro.path.diag.plus.clinical_sex_stratified.csv",
   out_counts_parent_synid = "syn77870712",
   out_counts_filename     = "norm-counts_rosmap.csv",
@@ -543,3 +552,5 @@ result_mayo_sexadj   <- run_DE_pipeline(mayo_cfg_sexadj)
 
 result_msbb_plus_clinical_sexadj   <- run_DE_pipeline(msbb_cfg_plus_clinical_sexadj)
 result_rosmap_plus_clinical_sexadj <- run_DE_pipeline(rosmap_cfg_plus_clinical_sexadj)
+
+
