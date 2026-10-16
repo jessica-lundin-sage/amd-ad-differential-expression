@@ -449,7 +449,7 @@ mayo_cfg <- list(
   output_parent_synid     = "syn77965053",
   output_filename         = "de_MAYO_neuro.path.diag_sex_stratified.csv",
   out_counts_parent_synid = "syn77870712",
-  out_counts_filename     = "norm-counts_mayo_test.csv",
+  out_counts_filename     = "norm-counts_mayo.csv",
   tissue_levels           = c("CBE", "TCX"),
   sex_levels              = c("male", "female"),
   diagnosis_var           = "diag2",
