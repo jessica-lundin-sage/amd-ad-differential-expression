@@ -174,7 +174,7 @@ run_DE_pipeline <- function(cfg, qc_plots = TRUE) {
   file_entity <- synGet(cfg$input_synid)
   cqn_obj <- readRDS(file_entity$path)
   md_sv   <- cqn_obj$metadata
-  dge_cqn <- cqn_obj$dge_cqn
+  dge_cqn <- cqn_obj$dge_cqn #DGEList file with "counts", "samples", "offset", "E" : E is the library normalized log2 expression data with the addition of the offset per-gene, per-sample correction cqn fits for GC content and gene length
   
   # 2. Cohort-specific metadata prep (may add columns and/or drop rows)
   md_sv <- cfg$prep_metadata(md_sv)
@@ -230,7 +230,8 @@ run_DE_pipeline <- function(cfg, qc_plots = TRUE) {
   
   # 5. voom weights + dream fit
   param_n <- MulticoreParam(workers = cfg$n_workers, RNGseed = 123, progressbar = TRUE)
-  
+
+  # use voomWithDreamWeights to get precision weight, but then overwrite with dge_cqn$E which is the library normalized log2 expression data with the addition of the offset per-gene, per-sample correction cqn fits for GC content and gene length
   voom_gene_expression <- voomWithDreamWeights(
     counts  = dge_cqn,
     formula = form_final0,
