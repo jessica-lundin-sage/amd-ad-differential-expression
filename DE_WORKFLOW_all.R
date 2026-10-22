@@ -178,6 +178,9 @@ run_DE_pipeline <- function(cfg, qc_plots = TRUE) {
   
   # 2. Cohort-specific metadata prep (may add columns and/or drop rows)
   md_sv <- cfg$prep_metadata(md_sv)
+
+  # formula
+  form_final0 <- as.formula(cfg$formula_str)
   
   # centering vars so scales are not so different to help with convergence (small number excluded due to this)
   num_covs <- c("RIN", "ageDeath_invnorm",
