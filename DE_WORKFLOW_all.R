@@ -174,11 +174,12 @@ run_DE_pipeline <- function(cfg, qc_plots = TRUE) {
   file_entity <- synGet(cfg$input_synid)
   cqn_obj <- readRDS(file_entity$path)
   md_sv   <- cqn_obj$metadata
-  dge_cqn <- cqn_obj$dge_cqn #DGEList file with "counts", "samples", "offset", "E" : E is the library normalized log2 expression data with the addition of the offset per-gene, per-sample correction cqn fits for GC content and gene length
+  dge_cqn <- cqn_obj$dge_cqn
+
   
   # 2. Cohort-specific metadata prep (may add columns and/or drop rows)
   md_sv <- cfg$prep_metadata(md_sv)
-
+  
   # formula
   form_final0 <- as.formula(cfg$formula_str)
   
@@ -233,8 +234,7 @@ run_DE_pipeline <- function(cfg, qc_plots = TRUE) {
   
   # 5. voom weights + dream fit
   param_n <- MulticoreParam(workers = cfg$n_workers, RNGseed = 123, progressbar = TRUE)
-
-  # use voomWithDreamWeights to get precision weight, but then overwrite with dge_cqn$E which is the library normalized log2 expression data with the addition of the offset per-gene, per-sample correction cqn fits for GC content and gene length
+  
   voom_gene_expression <- voomWithDreamWeights(
     counts  = dge_cqn,
     formula = form_final0,
@@ -424,7 +424,7 @@ msbb_cfg <- list(
 rosmap_cfg <- list(
   name                    = "ROSMAP",
   sex_mode                = "stratified",
-  input_synid             = "syn77964695",  # ROSMAP_md_counts_cqn_DLPFC_CN_PCC_FINAL.rds - new syn folder
+  input_synid             = "syn78387829",  # ROSMAP_md_counts_cqn_DLPFC_CN_PCC_FINAL_updated_filtered.rds 
   output_parent_synid     = "syn77965053",
   output_filename         = "de_ROSMAP_neuro.path.diag_sex_stratified.csv",
   out_counts_parent_synid = "syn77870712",
@@ -437,7 +437,7 @@ rosmap_cfg <- list(
   control_level           = "CT2",
   case_label              = "AD",
   control_label           = "CT",
-  formula_str             = "~ 0 + group + apoe4Status + ageDeath_invnorm + PMI_log + RIN + PC1_metrics + PC2_metrics + PC3_metrics + PC4_metrics + (1|final_batch) + (1|individualID)",
+  formula_str             = "~ 0 + group + apoe4Status + ageDeath_invnorm + PMI_log + RIN + libraryPrep + PC1_metrics + PC2_metrics + PC3_metrics + PC4_metrics + (1|final_batch) + (1|individualID)",
   prep_metadata           = rosmap_prep_metadata,
   n_workers               = 4,
   used                    = c("syn77559937"),
@@ -445,6 +445,7 @@ rosmap_cfg <- list(
   activityName            = "Reprocessed RNAseq differential expression files",
   activityDescription     = "Metadata, counts, differential expression results"
 )
+
 
 mayo_cfg <- list(
   name                    = "MAYO",
@@ -499,7 +500,7 @@ msbb_cfg_plus_clinical <- list(
 rosmap_cfg_plus_clinical <- list(
   name                    = "ROSMAP",
   sex_mode                = "stratified",
-  input_synid             = "syn77964695",  # ROSMAP_md_counts_cqn_DLPFC_CN_PCC_FINAL.rds - new syn folder
+  input_synid             = "syn78387829",  # ROSMAP_md_counts_cqn_DLPFC_CN_PCC_FINAL_updated_filtered.rds 
   output_parent_synid     = "syn77965053",
   output_filename         = "de_ROSMAP_neuro.path.diag.plus.clinical_sex_stratified.csv",
   out_counts_parent_synid = "syn77870712",
@@ -512,7 +513,7 @@ rosmap_cfg_plus_clinical <- list(
   control_level           = "CT",
   case_label              = "AD",
   control_label           = "CT",
-  formula_str             = "~ 0 + group + apoe4Status + ageDeath_invnorm + PMI_log + RIN + PC1_metrics + PC2_metrics + PC3_metrics + PC4_metrics + (1|final_batch) + (1|individualID)",
+  formula_str             = "~ 0 + group + apoe4Status + ageDeath_invnorm + PMI_log + RIN + libraryPrep + PC1_metrics + PC2_metrics + PC3_metrics + PC4_metrics + (1|final_batch) + (1|individualID)",
   prep_metadata           = rosmap_prep_metadata,
   n_workers               = 4,
   used                    = c("syn77559937"),
@@ -520,6 +521,7 @@ rosmap_cfg_plus_clinical <- list(
   activityName            = "Reprocessed RNAseq differential expression files",
   activityDescription     = "Metadata, counts, differential expression results"
 )
+
 
 ## ----------------------------------------------------------------------------
 ## Sex-adjusted configs — derived from the stratified ones above
