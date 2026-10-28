@@ -144,7 +144,7 @@ rename_out <- function(f) {
     if (grepl("sex_stratified", f)) return(sub("sex_stratified", "sex_adj", f))
     sub("(\\.[^.]+)$", "_sex_adj\\1", f)
   }
-  new$output_filename <- rename_out(new$output_filename)
+  new$output_filename_de <- rename_out(new$output_filename_de)
   
   if (keep_counts) {
     new$out_counts_filename <- rename_out(new$out_counts_filename)
@@ -184,6 +184,9 @@ run_DE_residuals_pipeline <- function(cfg, qc_plots = TRUE) {
   # 2. Cohort-specific metadata prep (diagnosis derivation, batch factors)
   md_sv <- cfg$prep_metadata(md_sv, qc_plots = qc_plots)
  
+  # formula
+  form_final0 <- as.formula(cfg$formula_str)
+  
   # centering vars so scales are not so different to help with convergence (small number excluded due to this)
   num_covs <- c("RIN", "ageDeath_invnorm",
                 grep("^PC\\d+_metrics$", colnames(md_sv), value = TRUE))
@@ -305,7 +308,7 @@ run_DE_residuals_pipeline <- function(cfg, qc_plots = TRUE) {
   ## STAGE 2: DE on the residualized matrix
   ## --------------------------------------------------------------------------
   
-  md_sv$group <- interaction(md_sv[[cfg$diagnosis_var]], md_sv$sex, md_sv$tissue2, drop = TRUE)
+  #md_sv$group <- interaction(md_sv[[cfg$diagnosis_var]], md_sv$sex, md_sv$tissue2, drop = TRUE)
   group <- md_sv$group
   # some formula terms are resolved via the global env as a fallback, matching
   # the original scripts' `environment(form) <- globalenv()` pattern
@@ -350,9 +353,9 @@ run_DE_residuals_pipeline <- function(cfg, qc_plots = TRUE) {
   # group + covariates
   results_sex <- list()
   if (sex_mode == "adjusted") {
-    sex_coef <- grep("^sex", colnames(coef(ebayes_fit)), value = TRUE)
+    sex_coef <- grep("^sex", colnames(coef(ebayes_res)), value = TRUE)
     results_sex <- setNames(
-      lapply(sex_coef, function(nm) topTable(ebayes_fit, coef = nm, number = Inf, confint = TRUE)),
+      lapply(sex_coef, function(nm) topTable(ebayes_res, coef = nm, number = Inf, confint = TRUE)),
       sex_coef
     )
   }
@@ -461,8 +464,8 @@ msbb_cfg <- list(
   #output_parent_synid  = "syn77539791", # Staging
   output_parent_synid_res  = "syn77802600", # res-counts
   output_parent_synid_de  = "syn77956686", # de-res-counts
-  output_filename_res  = "res-counts_msbb_test.csv",
-  output_filename_de   = "de-res_MSBB_neuro.path.diag_sex_stratified_test.rds",
+  output_filename_res  = "res-counts_msbb.csv",
+  output_filename_de   = "de-res_MSBB_neuro.path.diag_sex_stratified.csv",
   tissue_levels        = c("FP", "IFG", "PHG", "STG"),
   sex_levels           = c("male", "female"),
   diagnosis_var        = "diag2",
@@ -481,12 +484,12 @@ msbb_cfg <- list(
 rosmap_cfg <- list(
   name                 = "ROSMAP",
   sex_mode                = "stratified",
-  input_synid         = "syn77964695",  # ROSMAP_md_counts_cqn_DLPFC_CN_PCC_FINAL.rds - new syn folder
+  input_synid         = "syn78387829",  # ROSMAP_md_counts_cqn_DLPFC_CN_PCC_FINAL_updated_filtered.rds - single CQN run
   #output_parent_synid = "syn77539791", # Staging
   output_parent_synid_res  = "syn77802600", # res-counts
   output_parent_synid_de  = "syn77956686", # de-res-counts
-  output_filename_res  = "res-counts_rosmap_test.csv",  
-  output_filename_de   = "de-res_ROSMAP_neuro.path.diag_sex_stratified_test.csv",
+  output_filename_res  = "res-counts_rosmap.csv",  
+  output_filename_de   = "de-res_ROSMAP_neuro.path.diag_sex_stratified.csv",
   tissue_levels        = c("DLPFC", "PCC", "ACC"),
   sex_levels           = c("male", "female"),
   diagnosis_var        = "diag2",
@@ -495,7 +498,7 @@ rosmap_cfg <- list(
   control_level        = "CT2",
   case_label              = "AD",     # contrast names use AD/CT, not AD2/CT2
   control_label           = "CT",
-  residual_formula_str = "~ PMI_log + RIN + PC1_metrics + PC2_metrics + PC3_metrics + PC4_metrics + (1|final_batch)",
+  residual_formula_str = "~ PMI_log + RIN + libraryPrep + PC1_metrics + PC2_metrics + PC3_metrics + PC4_metrics + (1|final_batch)",
   residuals_method     = "variancePartition",
   de_formula_str       = de_formula_shared,
   prep_metadata        = rosmap_prep_metadata,
@@ -508,8 +511,8 @@ mayo_cfg <- list(
   input_synid          = "syn77548692",  # MAYO_md_counts_cqn_FINAL.rds - new syn folder
   output_parent_synid_res  = "syn77802600", # res-counts
   output_parent_synid_de  = "syn77956686", # de-res-counts
-  output_filename_res  = "res-counts_mayo_test.csv",
-  output_filename_de   = "de-res_MAYO_neuro.path.diag_sex_stratified_test.csv",
+  output_filename_res  = "res-counts_mayo.csv",
+  output_filename_de   = "de-res_MAYO_neuro.path.diag_sex_stratified.csv",
   tissue_levels        = c("CBE", "TCX"),
   sex_levels           = c("male", "female"),
   diagnosis_var        = "diag2",
@@ -551,7 +554,9 @@ result_rosmap <- run_DE_residuals_pipeline(rosmap_cfg)
 result_mayo   <- run_DE_residuals_pipeline(mayo_cfg)
 
 ## Sex-adjusted (sex as covariate)
-result_msbb_sexadj   <- run_DE_pipeline(msbb_cfg_sexadj)
-result_rosmap_sexadj <- run_DE_pipeline(rosmap_cfg_sexadj)
-result_mayo_sexadj   <- run_DE_pipeline(mayo_cfg_sexadj)
+result_msbb_sexadj   <- run_DE_residuals_pipeline(msbb_cfg_sexadj)
+result_rosmap_sexadj <- run_DE_residuals_pipeline(rosmap_cfg_sexadj)
+result_mayo_sexadj   <- run_DE_residuals_pipeline(mayo_cfg_sexadj)
+
+
 
